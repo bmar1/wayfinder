@@ -5,6 +5,8 @@
 - **Verify** only via Zabihah → `Verified`.
 - Dietary tags stay normalized and extensible; halal ships first.
 - Restriction filters return **Verified + Likely** only. `Unchecked` and `False` are first-class but excluded from those filters. `False` means confirmed not that restriction (not “unknown”).
+- **Stack:** Postgres + `pg_trgm` (name matching) + PostGIS (geo). One `pg-boss` job runner (Postgres-backed queue, no Redis) drains all background work: matching, scraping, Zabihah refresh. No bespoke workers, no Elasticsearch/Algolia (indexes below are enough at campus scale).
+- **v1 scope cut (2026-09-09 ponytail pass):** no local feedback loop, no Zabihah signal outbox, no NL search, no HalalRank. See [outline.md "Out of scope"](./outline.md) for triggers to revisit. This doc reflects that cut; do not re-add their tables without re-approving scope first.
 
 ## Core tables
 
@@ -22,14 +24,17 @@
 | photo_url | string, nullable | Prefer Google/cached assets; not Zabihah UGC scrape |
 | phone / website | string, nullable | |
 | zabihah_url | string, nullable | Deep link when known |
-| discovery_sources | string[] or flags | e.g. `google`, `zabihah` — how we first saw it |
 | match_status | enum | `unmatched` / `auto` / `admin` / `conflict` |
 | match_confidence | float, nullable | Auto-match score when applicable |
 | last_enriched_at | timestamp, nullable | Scrapes / provider refresh |
 | last_zabihah_sync_at | timestamp, nullable | Last successful Zabihah detail/rank pull |
+| zabihah_snapshot | jsonb, nullable | Cached Zabihah detail payload; see below, replaces a separate table |
+| zabihah_snapshot_fetched_at | timestamp, nullable | When `zabihah_snapshot` was last refreshed |
 | created_at / updated_at | timestamp | |
 
 Either provider ID may be null. Admin link sets `zabihah_place_id` (or google) and `match_status = admin`.
+
+No `discovery_sources` column: "did this come from Google/Zabihah" is derivable (`google_place_id IS NOT NULL`, `zabihah_place_id IS NOT NULL`), storing it separately just risks drift.
 
 ### `dietary_tags`
 One row per `(restaurant_id, tag_type)`.
@@ -44,64 +49,46 @@ One row per `(restaurant_id, tag_type)`.
 | verified_source | enum, nullable | Only when `verified`: `zabihah` (sole v1 verifier) |
 | likely_sources | string[] or join table | e.g. `scrape`, `keyword`, `community` |
 | last_verified_at | timestamp, nullable | Zabihah sync time when verified |
-| last_checked_at | timestamp, nullable | Last scrape/community evaluation |
-| note | text, nullable | Short audit (“menu says halal”, etc.) |
+| last_checked_at | timestamp, nullable | Last scrape/community evaluation attempt (including “nothing found”) |
+| check_attempts | int, default 0 | Scrape attempts while status stays `unchecked`; drives cron backoff |
+| note | text, nullable | Short audit (“menu says halal”, “no website found”, etc.) |
 
 **Rules**
 - Setting `status = verified` requires a linked `zabihah_place_id` and a successful Zabihah read that supports halal.
-- Scraping / community may move `unchecked` → `likely` or → `false`, or demote `likely` → `false`. They must **not** set `verified`.
-- Default for a newly discovered place with no signal: `unchecked`.
+- Scraping / community may move `unchecked` → `likely`, or → `false` **only on explicit negative evidence**; they must **not** set `verified`.
+- Scraping that finds **no evidence either way** (no website, unparseable, no dietary language) stays `unchecked`: increment `check_attempts`, stamp `last_checked_at`, do not set `false`. See [scraping policy](../features/scraping-policy.md) for the full rationale and cron cadence.
+- Default for a newly discovered place with no signal: `unchecked`, `check_attempts = 0`.
 
-### `zabihah_snapshots` (optional but recommended)
-Cache of Zabihah fields we display or use for Verified — avoids re-hitting detail on every request.
+### `zabihah_snapshot` (column, not a table)
+Dropped the separate `zabihah_snapshots` table: it's cache/debug data we don't filter across restaurants by in v1, so it's one JSONB blob on `restaurants` instead of a joined table.
 
-| column | type | notes |
-|---|---|---|
-| restaurant_id | uuid (PK/FK) | |
-| meat_halal_status | string, nullable | e.g. Full / Partial |
-| verification_status_code / label | int/string, nullable | Zabihah verificationStatus |
-| hand_slaughtered | bool, nullable | |
-| alcohol_policy | string, nullable | |
-| authority / supplier | string, nullable | |
-|halal_rank_score | int, nullable | |
-|halal_rank_tier | string, nullable | |
-|halal_rank_computed_on | timestamp, nullable | |
-| raw_json | jsonb, nullable | Trimmed payload for debug; no third-party reviews |
-| fetched_at | timestamp | |
-| attribution | string | e.g. Data © Zabihah — https://www.zabihah.com |
+```json
+{
+  "meatHalalStatus": "Full",
+  "verificationStatus": { "code": 6, "label": "..." },
+  "handSlaughtered": true,
+  "alcoholPolicy": "NotAllowed",
+  "authority": "...", "supplier": "...",
+  "attribution": "Data © Zabihah — https://www.zabihah.com"
+}
+```
 
-### `tag_feedback` (local confirm / flag)
-| column | type | notes |
-|---|---|---|
-| id | uuid (PK) | |
-| dietary_tag_id | uuid (FK) | |
-| user_id or device_id | string | Lightweight identity OK in v1 |
-| vote | enum | `confirm` (still matches) / `reject` (changed → false for that tag) |
-| created_at | timestamp | |
+No `halalRank` field: HalalRank score/tier is deferred (out of scope v1, see outline.md), the Verified badge + `zabihahUrl` link is the trust signal that ships. If a filter later needs to query a field directly (e.g. `alcoholPolicy`), promote it to a real column then. Never store third-party reviews/photos in here.
 
-Aggregates adjust `confidence_score` or flip `likely` ↔ `false` per product rules. **Not** forwarded to Zabihah contribute endpoints in v1.
+### Deferred tables (not built for v1)
+- `tag_feedback` (local confirm/reject) — no traffic to feed it yet.
+- `usage_signals_outbox` (Zabihah contribute/signal) — earns zero give-to-get credit per Zabihah's own docs, not worth a table + job for v1.
 
-### `usage_signals_outbox` (Zabihah contribute/signal)
-| column | type | notes |
-|---|---|---|
-| id | uuid (PK) | |
-| type | enum | `search` / `view` / `tap` / `favorite` / `direction` |
-| place_id | string, nullable | Zabihah place id when required |
-| query | string, nullable | For search signals (≥ 2 chars) |
-| count | int, default 1 | |
-| idempotency_key | string, nullable | |
-| status | enum | `pending` / `sent` / `failed` |
-| created_at / sent_at | timestamp | |
-
-No PII. Usage signals earn no Zabihah give-to-get credit; still send for program hygiene / limits.
+Both were fully speced in an earlier draft; re-add only after re-confirming the scope call in [outline.md](./outline.md).
 
 ## Indexing
-- Geo index on `restaurants(lat, lng)` (PostGIS `GIST` or geohash).
+- Geo index on `restaurants(geo)` (PostGIS `GIST`, `geography` column, or `ST_MakePoint(lng, lat)`).
+- Trigram index on `restaurants(name)` (`CREATE EXTENSION pg_trgm; CREATE INDEX ... USING gist (name gist_trgm_ops)`) for matching, below.
 - Unique indexes on `google_place_id` and `zabihah_place_id` where not null.
 - `(tag_type, status)` on `dietary_tags` for “halal verified|likely near me”.
 - Composite `(tag_type, restaurant_id)` unique.
 
-## Query path (map + NL converge here)
+## Query path (map/filter UI builds this directly)
 
 ```json
 {
@@ -120,23 +107,7 @@ No PII. Usage signals earn no Zabihah give-to-get credit; still send for program
 - Unfiltered browse may omit `tag_type` / include `unchecked` if product wants discovery of unchecked places — **not** inside halal filter.
 - Never return `false` for that `tag_type` in a positive restriction filter.
 
-### Gemini filter-extraction (translator only)
-
-```
-Extract search filters from the user's food query. Output ONLY valid JSON:
-{
-  "tag_type": "halal" | "kosher" | "vegetarian" | "vegan" | "low_calorie" | null,
-  "statuses": ["verified", "likely"] | null,
-  "max_price_level": 1-4 | null,
-  "radius_km": number | null,
-  "keywords": string[] | null,
-  "sort_by": "distance" | "price" | null
-}
-Default radius_km to 1.5 if unspecified.
-If a restriction is implied, default statuses to ["verified","likely"].
-If unsupported tag_type for this deployment, still extract it — backend returns friendly "not supported yet".
-Return JSON only.
-```
+**Deferred:** natural-language search (Gemini extraction into this same shape) is out of scope v1, see [outline.md](./outline.md). Ship map/filter search alone first; the query contract above is already shaped so an NL layer can bolt on later without a schema change.
 
 ## Provider + enrichment flow
 
@@ -145,19 +116,20 @@ Google search OR Zabihah search
         ↓
   upsert restaurants (provider ids)
         ↓
-  auto-match name+geo → zabihah_place_id (or admin link)
+  matching query (single SQL statement, see provider-matching.md)
         ↓
-  if zabihah linked: GET place /halalrank → snapshot → status Verified when signals support
+  if zabihah linked: pg-boss job → GET /places/{id} → zabihah_snapshot → Verified when signals support
         ↓
-  else / also: scrape & local feedback → Likely or False (never Verified)
+  else / also: pg-boss job → scrape → Likely or False (never Verified)
         ↓
-  query API serves DB; outbox drains usage signals
+  query API serves DB directly
 ```
 
+One `pg-boss` install covers matching follow-up, Zabihah refresh, and scraping, no separate queue tech per concern.
+
 ## Open decisions (implementation plan, not blockers for schema)
-- Exact auto-match distance/name thresholds.
 - Whether Unchecked places appear on the default map with no halal filter.
-- TTL for Zabihah snapshot refresh vs on-demand.
+- TTL for Zabihah snapshot refresh vs on-demand (auto-match thresholds are now fixed in [provider-matching.md](../features/provider-matching.md)).
 
 ## Related
 - [Overview](./outline.md)

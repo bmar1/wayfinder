@@ -3,15 +3,15 @@
 Wayfinder **discovers** places via **Google Places** and/or **Zabihah**. Only **Zabihah** can set dietary status **Verified**. User-facing search hits **our DB** first; live provider calls are for ingest/enrichment (and optional live mode later).
 
 ```
-[Map / NL UI] → structured query → Wayfinder DB
+[Map/filter UI] → structured query → Wayfinder DB
                       ↑
-         ingest / enrich workers
+         ingest / enrich jobs (pg-boss)
          ├─ Google Places (Nearby / Text / Details / Photos)
-         ├─ Zabihah search / detail / halalrank
+         ├─ Zabihah search / detail
          └─ scrape (Likely / False only)
-                      ↓
-              signal outbox → Zabihah POST /contribute/signal
 ```
+
+**v1 scope cut (2026-09-09):** no HalalRank calls, no `contribute/signal` outbox, no NL search UI. See [outline.md "Out of scope"](../product/outline.md).
 
 | Concern | Owner |
 |---|---|
@@ -89,13 +89,13 @@ Official base: `https://www.zabihah.com/api/v1`
 **Attribution required** on every plan wherever Zabihah data is shown.
 
 ## Role in Wayfinder
-- Discovery (search) **and** sole **Verified** authority (detail / HalalRank).
-- Usage **signals** only in v1 (`POST /contribute/signal`). Confirm/false stays local.
+- Discovery (search) **and** sole **Verified** authority (place detail).
+- No writes to Zabihah in v1 (no `contribute/signal`, no HalalRank read); see scope cut above.
 
 ## Setup
 1. Apply for a key (sandbox first: verify email/phone; one application under review at a time).
 2. Auth: `Authorization: Bearer …` **or** `x-api-key`.
-3. Env: `ZABIHAH_API_KEY`, `ZABIHAH_BASE_URL`, optional `ZABIHAH_HALALRANK_ENABLED` (`halalrank.read`).
+3. Env: `ZABIHAH_API_KEY`, `ZABIHAH_BASE_URL`.
 
 ```bash
 curl "https://www.zabihah.com/api/v1/places/search?keyword=kabab&lat=38.9&lng=-77.4&radius=25&parts=hours&parts=cuisines" \
@@ -117,11 +117,10 @@ curl "https://www.zabihah.com/api/v1/places/search?keyword=kabab&lat=38.9&lng=-7
 ### Weight
 | Call | Weight |
 |---|---|
-| `GET /places/{id}`, `GET /halalrank/{id}` | 1 |
+| `GET /places/{id}` | 1 |
 | Search | 3 + 1 per `parts` value |
-| Contribution | 1 |
 
-Keep search `parts` lean; pull extras on detail.
+Keep search `parts` lean; pull extras on detail. (`GET /halalrank/{id}` exists but is unused in v1.)
 
 ## Endpoints Wayfinder uses
 ### `GET /places/search`
@@ -132,16 +131,10 @@ Must be constrained (else 400): meaningful filter; keyword ≥ 2 chars, not wild
 **Use:** parallel discovery; upsert `zabihah_place_id`; may set Verified + snapshot if payload is enough, else enqueue detail/halalrank.
 
 ### `GET /places/{id}`
-Detail + halal signals. Sets/refreshes `zabihah_snapshots` and **Verified** when signals warrant. Never invent Verified from Google/scrape.
+Detail + halal signals. Sets/refreshes `restaurants.zabihah_snapshot` and **Verified** when signals warrant. Never invent Verified from Google/scrape.
 
-### `GET /halalrank/{id}`
-Needs `halalrank.read`. Cache with detail TTL; show tier/score next to Verified.
-
-### `POST /contribute/signal` (v1 only)
-Anonymized: search `{ type, query, count? }` or place `{ type: view|tap|favorite|direction, placeId, count? }`. Idempotency-Key optional. No PII. Body ≤ 16 KB.
-
-### Deferred
-`correction`, `halal-evidence`, `missing-place`, `review` — not v1.
+### Deferred (not called in v1)
+`GET /halalrank/{id}` (needs `halalrank.read`, adds a score/tier we're not shipping yet), `POST /contribute/signal` (earns zero give-to-get credit per Zabihah's docs), `correction`, `halal-evidence`, `missing-place`, `review`. See [outline.md "Out of scope"](../product/outline.md) for triggers to revisit.
 
 ## Zabihah errors
 | Code | Action |
@@ -165,5 +158,4 @@ First-party halal only — no third-party reviews/photos/discussions. Use `zabih
 - [ ] Field masks / `parts` minimized
 - [ ] Upserts align with [schema](../product/schema-and-search-design.md)
 - [ ] Attribution UI for Zabihah-backed rows
-- [ ] Signal outbox worker
 - [ ] Matching thresholds live before auto-link ([provider-matching](./provider-matching.md))

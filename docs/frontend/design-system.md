@@ -1,6 +1,6 @@
 # Wayfinder Design System — Frontend
 
-Approved direction from product brainstorming: **mobile map first**, bold Toronto landing to app, desktop secondary. Visual language: **urban + local** (downtown weight, still "home"). **Approach 1** palette (cream canvas, brighter espresso, harbour teal). **Type pairing A:** Syne + Source Serif 4. Motion is first-class (load, success, fail, spin-up).
+Approved direction from product brainstorming: **mobile map first**, bold Toronto landing to app, desktop secondary. Visual language: **urban + local** (downtown weight, still "home"). **Approach 1** palette (cream canvas, brighter espresso, harbour teal, one deep ink block). **Type pairing A:** Bricolage Grotesque + Source Serif 4. Motion is first-class (load, success, fail, spin-up).
 
 This doc also applies `design-taste-frontend` (anti-slop frontend skill) to the **landing page** surface and defends every non-default choice against its checklist. The **map app itself is out of that skill's scope** (Section 13: dense product UI / dashboards are excluded); it still borrows the skill's accessibility and motion-honesty rules by extension.
 
@@ -49,6 +49,11 @@ No GSAP/scroll-hijack patterns are used; the landing has no pinned scroll sectio
 | `--danger` | `#8B3A2F` | Fail, False / not-halal (semantic status) |
 | `--line` | `#D4CBBE` | Hairlines on cream |
 | `--on-harbour` | `#F3EEE4` | Text on teal buttons |
+| `--ink` | `#12302E` | The one dark surface: hero photo scrim, single colour block |
+| `--ink-soft` | `#9FB8B3` | Secondary text on ink |
+| `--on-ink` | `#F3EEE4` | Primary text on ink |
+
+`--ink` is a deep pine pulled from the harbour hue, so the accent still reads on top of it. It is used twice by design: as the hero photograph's scrim and as one deliberate colour block (the Google Maps comparison). The page never alternates light and dark section to section (skill 4.11); the block is a composition break, and the hero is media with an overlay.
 
 ### 3.1 Defense against the Premium-Consumer Palette Ban (skill Section 4.2)
 
@@ -73,9 +78,11 @@ Our cream (`#F3EEE4`) and warn/amber (`#B8892A`) sit in that same family by cons
 
 | Role | Family | Notes |
 |---|---|---|
-| Display / brand / map chrome titles | **Syne** | Sans-serif display, per skill default |
+| Display / brand / map chrome titles | **Bricolage Grotesque** | Sans-serif display, per skill default |
 | Body / disclaimers / serif moments | **Source Serif 4** | Small-role body serif only |
-| UI fallback | Syne Medium/Regular, smaller sizes | One grotesk for chrome |
+| UI fallback | Bricolage Grotesque Medium/Regular, smaller sizes | One grotesk for chrome |
+
+Exposed to components as two utilities only, `font-display` and `font-serif`, mapped from `--font-display` / `--font-serif` in `globals.css`. Components never name a font family directly, so the display face can be re-pointed in one place.
 
 ### 4.1 Defense against Serif Discipline (skill Section 4.1)
 

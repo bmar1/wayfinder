@@ -24,9 +24,8 @@ When halal filter is on and nothing matches:
 
   > Dietary labels can change. Always confirm with the restaurant if it matters for your practice.
 
-## Confirm / reject prompts (local)
-- “Still halal?” → Confirm / It’s changed (not halal)
-- After reject: “Thanks, we’ll mark this as not halal pending review of signals.” (status → `false` per product rules)
+## Confirm / reject prompts
+Deferred (post-v1): no user-facing confirm/reject UI in v1, status changes come only from Zabihah verification and the scrape job. Revisit once there's real user traffic to sustain the loop. See [outline.md "Out of scope"](../product/outline.md).
 
 ## Attribution
 Zabihah-backed fields: `Data © Zabihah — https://www.zabihah.com` (or API `_attribution` string).
