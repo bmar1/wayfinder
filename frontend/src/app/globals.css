@@ -1,0 +1,98 @@
+@import "tailwindcss";
+
+/*
+  Wayfinder design tokens.
+  Source of truth: docs/frontend/design-system.md (Approach 1 palette, Pairing A type).
+  Light-only by deliberate choice (trust-first override, matches the map app in v1);
+  see design-system.md Section 0 / skill Section 6.C for why this deviates from the
+  "always ship dark mode" default.
+*/
+
+:root {
+  --cream: #f3eee4;
+  --cream-deep: #e7e0d4;
+  --espresso: #3b2a22;
+  --espresso-soft: #5c4a40;
+  --harbour: #0e6b6a;
+  --harbour-bright: #1a8f8c;
+  --warn: #b8892a;
+  --danger: #8b3a2f;
+  --line: #d4cbbe;
+  --on-harbour: #f3eee4;
+
+  /*
+    Ink is the one dark surface on the page, a deep pine pulled from the
+    harbour hue so the accent still reads on top of it. Used for a single
+    deliberate colour block (the comparison section), never alternated.
+  */
+  --ink: #12302e;
+  --ink-soft: #9fb8b3;
+  --on-ink: #f3eee4;
+
+  --radius-pill: 999px;
+  --radius-panel: 16px;
+  --radius-input: 8px;
+
+  --ease-enter: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-exit: cubic-bezier(0.4, 0, 1, 1);
+}
+
+@theme inline {
+  --color-cream: var(--cream);
+  --color-cream-deep: var(--cream-deep);
+  --color-espresso: var(--espresso);
+  --color-espresso-soft: var(--espresso-soft);
+  --color-harbour: var(--harbour);
+  --color-harbour-bright: var(--harbour-bright);
+  --color-warn: var(--warn);
+  --color-danger: var(--danger);
+  --color-line: var(--line);
+  --color-on-harbour: var(--on-harbour);
+  --color-ink: var(--ink);
+  --color-ink-soft: var(--ink-soft);
+  --color-on-ink: var(--on-ink);
+
+  --font-display: var(--font-bricolage);
+  --font-serif: var(--font-source-serif);
+
+  --radius-pill: var(--radius-pill);
+  --radius-panel: var(--radius-panel);
+  --radius-input: var(--radius-input);
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+}
+
+body {
+  background: var(--cream);
+  color: var(--espresso);
+  font-family: var(--font-bricolage), sans-serif;
+}
+
+::selection {
+  background: var(--harbour);
+  color: var(--on-harbour);
+}
+
+.maplibregl-ctrl-group {
+  border: 1px solid var(--line) !important;
+  box-shadow: 0 8px 24px rgb(59 42 34 / 0.12) !important;
+  overflow: hidden;
+}
+
+.maplibregl-ctrl-group button {
+  width: 36px !important;
+  height: 36px !important;
+}
+
+.maplibregl-ctrl-attrib {
+  font-size: 10px;
+  background: rgb(243 238 228 / 0.9) !important;
+}
