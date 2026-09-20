@@ -2,7 +2,11 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useReducedMotion } from "motion/react";
+import type { Map as MapLibreMap, Marker as MapLibreMarker, Popup as MapLibrePopup } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
+import type { DemoRestaurant } from "@/lib/demo-restaurants";
+import { createPinElement, getPinDot, updatePinElement } from "@/lib/map-pin";
+import { createHoverCard } from "@/lib/map-hover-card";
 
 type Viewport = {
   lat: number;
@@ -28,19 +32,42 @@ function toLngLat(latLng: number[]): [number, number] {
   return [latLng[1], latLng[0]];
 }
 
+/** Minimal shape of the dynamically-imported maplibre-gl module this file needs beyond `Map`. */
+type MapLibreGL = {
+  Marker: new (options?: { element?: HTMLElement }) => MapLibreMarker;
+  Popup: new (options?: { closeButton?: boolean; closeOnClick?: boolean; offset?: number }) => MapLibrePopup;
+};
+
+type MapCanvasProps = {
+  restaurants: DemoRestaurant[];
+  selectedId: string | null;
+  onSelectRestaurant: (id: string) => void;
+};
+
 /**
- * Empty Toronto canvas. Pins wait on PostGIS ingest. MapLibre is imported
- * inside the effect so Turbopack never evaluates it on the server.
+ * Toronto canvas with demo restaurant pins. MapLibre is imported inside the
+ * effect so Turbopack never evaluates it on the server. Markers are synced
+ * to the (possibly filtered) `restaurants` prop, so toggling a filter
+ * adds/removes pins instead of just hiding them.
  */
-export function MapCanvas() {
+export function MapCanvas({ restaurants, selectedId, onSelectRestaurant }: MapCanvasProps) {
   const ref = useRef<HTMLDivElement>(null);
-  const mapRef = useRef<{ remove: () => void } | null>(null);
+  const mapRef = useRef<MapLibreMap | null>(null);
+  const glRef = useRef<MapLibreGL | null>(null);
+  const markersRef = useRef<Map<string, MapLibreMarker>>(new Map());
+  const hoverPopupRef = useRef<MapLibrePopup | null>(null);
+  const onSelectRef = useRef(onSelectRestaurant);
   const [ready, setReady] = useState(false);
   const reduce = useReducedMotion();
 
   useEffect(() => {
+    onSelectRef.current = onSelectRestaurant;
+  }, [onSelectRestaurant]);
+
+  useEffect(() => {
     if (!ref.current || mapRef.current) return;
     const container = ref.current;
+    const markers = markersRef.current;
     let cancelled = false;
 
     async function boot() {
@@ -58,6 +85,7 @@ export function MapCanvas() {
 
       const maplibre = await import("maplibre-gl");
       const maplibregl = maplibre.default ?? maplibre;
+      glRef.current = maplibregl as unknown as MapLibreGL;
 
       const map = new maplibregl.Map({
         container,
@@ -87,6 +115,7 @@ export function MapCanvas() {
         map.resize();
         setReady(true);
       });
+
       mapRef.current = map;
     }
 
@@ -94,10 +123,87 @@ export function MapCanvas() {
 
     return () => {
       cancelled = true;
+      hoverPopupRef.current?.remove();
+      markers.forEach((marker) => marker.remove());
+      markers.clear();
       mapRef.current?.remove();
       mapRef.current = null;
     };
   }, []);
+
+  // Sync markers to the (filtered) restaurant list, keep selection styling
+  // current, and fly to the selected restaurant.
+  useEffect(() => {
+    const map = mapRef.current;
+    const maplibregl = glRef.current;
+    if (!map || !maplibregl || !ready) return;
+
+    const markers = markersRef.current;
+    const currentIds = new Set(restaurants.map((r) => r.id));
+
+    // Drop markers for restaurants no longer in the (filtered) list.
+    markers.forEach((marker, id) => {
+      if (!currentIds.has(id)) {
+        marker.remove();
+        markers.delete(id);
+      }
+    });
+
+    // Add markers for restaurants that don't have one yet.
+    restaurants.forEach((restaurant, index) => {
+      if (markers.has(restaurant.id)) return;
+
+      const el = createPinElement(restaurant.dietaryStatus, restaurant.id === selectedId);
+      const dot = getPinDot(el);
+      dot.style.opacity = reduce ? "1" : "0";
+      dot.style.transform = reduce ? "scale(1)" : "scale(0.4)";
+
+      el.addEventListener("click", () => onSelectRef.current(restaurant.id));
+      el.addEventListener("mouseenter", () => {
+        if (!hoverPopupRef.current) {
+          hoverPopupRef.current = new maplibregl.Popup({
+            closeButton: false,
+            closeOnClick: false,
+            offset: 18,
+          });
+        }
+        hoverPopupRef.current
+          .setLngLat([restaurant.lng, restaurant.lat])
+          .setDOMContent(createHoverCard(restaurant))
+          .addTo(map);
+      });
+      el.addEventListener("mouseleave", () => {
+        hoverPopupRef.current?.remove();
+      });
+
+      const marker = new maplibregl.Marker({ element: el }).setLngLat([restaurant.lng, restaurant.lat]).addTo(map);
+      markers.set(restaurant.id, marker);
+
+      // pinEnter: staggered arrival reads as "results arriving," not a layout jump.
+      if (!reduce) {
+        window.setTimeout(() => {
+          dot.style.opacity = "1";
+          dot.style.transform = "scale(1)";
+        }, index * 40);
+      }
+    });
+
+    // Update every visible marker's selected styling.
+    markers.forEach((marker, id) => {
+      const restaurant = restaurants.find((r) => r.id === id);
+      if (!restaurant) return;
+      updatePinElement(marker.getElement() as HTMLDivElement, restaurant.dietaryStatus, id === selectedId);
+    });
+
+    const selected = restaurants.find((r) => r.id === selectedId);
+    if (selected && markers.has(selected.id)) {
+      if (reduce) {
+        map.jumpTo({ center: [selected.lng, selected.lat], zoom: 15 });
+      } else {
+        map.flyTo({ center: [selected.lng, selected.lat], zoom: 15, essential: true });
+      }
+    }
+  }, [restaurants, selectedId, ready, reduce]);
 
   return (
     <>
